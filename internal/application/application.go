@@ -250,6 +250,32 @@ func (a *Application) consumerOffsets(profile, topic string) ([]kafka.ConsumerOf
 	return conn.ConsumerOffsets(a.ctx, topic)
 }
 
+func (a *Application) GetMessages(profile, topic, query string) ([]kafka.Message, error) {
+	messages, err := a.getMessages(profile, topic, query)
+	if err != nil {
+		runtime.MessageDialog(
+			a.ctx,
+			runtime.MessageDialogOptions{
+				Type:    runtime.ErrorDialog,
+				Message: err.Error(),
+			},
+		)
+	}
+
+	return messages, err
+}
+
+func (a *Application) getMessages(profile, topic, query string) ([]kafka.Message, error) {
+	runtime.LogDebugf(a.ctx, "lookup for opened connects: %s", profile)
+
+	conn, ok := a.conns[profile]
+	if !ok {
+		return nil, fmt.Errorf("profile %q not connected", profile)
+	}
+
+	return conn.GetMessages(a.ctx, topic, query)
+}
+
 func (a *Application) getProfileByName(profileName string) (Profile, bool) {
 	for _, p := range a.cfg.Profiles {
 		if p.Name == profileName {

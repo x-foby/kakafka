@@ -3,8 +3,12 @@ package kafka
 import (
 	"context"
 	"errors"
+	"io"
+	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/protocol"
+	"github.com/x-foby/kakafka/pkg/kaql"
 )
 
 type Broker struct {
@@ -267,6 +271,81 @@ func (c *Conn) ConsumerOffsets(ctx context.Context, topicName string) ([]Consume
 	}
 
 	return offsets, nil
+}
+
+type Message struct {
+	Key    string    `json:"key"`
+	Value  string    `json:"value"`
+	Offset int64     `json:"offset"`
+	Time   time.Time `json:"time"`
+}
+
+func newMessageFromRecord(rec *protocol.Record) (Message, error) {
+	key, err := readString(rec.Key)
+	if err != nil {
+		return Message{}, err
+	}
+
+	value, err := readString(rec.Value)
+	if err != nil {
+		return Message{}, err
+	}
+
+	return Message{
+		Offset: rec.Offset,
+		Time:   rec.Time,
+		Key:    key,
+		Value:  value,
+	}, nil
+}
+
+func readString(data protocol.Bytes) (string, error) {
+	buf, err := io.ReadAll(data)
+	if err != nil {
+		return "", err
+	}
+
+	return string(buf), nil
+}
+
+func (c *Conn) GetMessages(ctx context.Context, topicName, query string) ([]Message, error) {
+	resp, err := c.client.Fetch(ctx, &kafka.FetchRequest{
+		Addr:  kafka.TCP(c.brokers...),
+		Topic: topicName,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	kaQL, err := kaql.New(query)
+	if err != nil {
+		return nil, err
+	}
+
+	var messages []Message
+
+	for i := 0; i <= 50; {
+		rec, err := resp.Records.ReadRecord()
+		if errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+
+		msg, err := newMessageFromRecord(rec)
+		if err != nil {
+			return nil, err
+		}
+
+		if kaQL.Match(msg) {
+			messages = append(messages, msg)
+			i++
+
+			continue
+		}
+	}
+
+	return messages, nil
 }
 
 func (c *Conn) topic(name string) (Topic, bool) {
